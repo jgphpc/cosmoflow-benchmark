@@ -1,8 +1,8 @@
 #!/bin/bash -l
-#SBATCH --constraint=gpu
+#SBATCH --constraint=mc
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
-#SBATCH -t 0:20:00
+#SBATCH -t 0:40:00
 #SBATCH -J train-cosmoflow-daint
 #SBATCH -o logs/%x-%j.out
 
@@ -21,4 +21,4 @@
 
 # Run the training
 set -x
-srun -l -u python train.py --distributed --rank-gpu $@
+srun -l -u python train.py --distributed $@
