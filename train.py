@@ -16,7 +16,7 @@ import pandas as pd
 import tensorflow as tf
 # Suppress TF warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-tf.compat.v1.logging.set_verbosity(logging.ERROR)
+tf.compat.v1.logging.set_verbosity(logging.DEBUG)
 import horovod.tensorflow.keras as hvd
 
 # Local imports
@@ -55,6 +55,7 @@ def parse_args():
 
     # Hyperparameter settings
     add_arg('--conv-size', type=int, help='CNN size parameter')
+    add_arg('--n-conv-layers', type=int, help='CNN number of sequential layers')
     add_arg('--fc1-size', type=int, help='Fully-connected size parameter 1')
     add_arg('--fc2-size', type=int, help='Fully-connected size parameter 2')
     add_arg('--hidden-activation', help='Override hidden activation function')
@@ -76,10 +77,15 @@ def parse_args():
 def init_workers(distributed=False):
     if distributed:
         hvd.init()
+        # if hvd.rank() == 0:
+        #     import pydevd_pycharm
+        #     pydevd_pycharm.settrace('localhost', port=23232, stdoutToServer=True, stderrToServer=True)
         return SimpleNamespace(rank=hvd.rank(), size=hvd.size(),
                                local_rank=hvd.local_rank(),
                                local_size=hvd.local_size())
     else:
+        import pydevd_pycharm
+        pydevd_pycharm.settrace('localhost', port=23232, stdoutToServer=True, stderrToServer=True)
         return SimpleNamespace(rank=0, size=1, local_rank=0, local_size=1)
 
 def config_logging(verbose):
@@ -115,6 +121,8 @@ def load_config(args):
     # Hyperparameters
     if args.conv_size is not None:
         config['model']['conv_size'] = args.conv_size
+    if args.n_conv_layers is not None:
+        config['model']['n_conv_layers'] = args.n_conv_layers
     if args.fc1_size is not None:
         config['model']['fc1_size'] = args.fc1_size
     if args.fc2_size is not None:
@@ -195,9 +203,14 @@ def main():
         # Configure the optimizer
         opt = get_optimizer(distributed=args.distributed,
                             **config['optimizer'])
+
+        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        #run_metadata = tf.RunMetadata()
+
         # Compile the model
         model.compile(optimizer=opt, loss=train_config['loss'],
                       metrics=train_config['metrics'])
+                      #options=run_options, run_metadata=run_metadata)
 
     if dist.rank == 0:
         model.summary()
