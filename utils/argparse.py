@@ -14,5 +14,5 @@ import yaml
 
 class ReadYaml(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
-        my_dict = yaml.load(values, Loader=yaml.FullLoader)
+        my_dict = yaml.load(values, Loader=yaml.Loader)
         setattr(namespace, self.dest, my_dict)

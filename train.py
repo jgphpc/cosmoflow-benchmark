@@ -90,7 +90,7 @@ def config_logging(verbose):
 def load_config(args):
     """Reads the YAML config file and returns a config dictionary"""
     with open(args.config) as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.load(f, Loader=yaml.Loader)
 
     # Expand paths
     output_dir = config['output_dir'] if args.output_dir is None else args.output_dir
