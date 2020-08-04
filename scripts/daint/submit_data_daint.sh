@@ -12,7 +12,7 @@ set +x
 for log_n_ranks in $(seq 0 ${log_max_ranks}); do
   n_ranks=$((2**log_n_ranks))
   set -x
-  sbatch -N ${n_ranks}  scripts/daint/train_daint.sh  \
+  sbatch -N ${n_ranks}  scripts/daint/train_daint.sh --data-benchmark  \
       --data-dir ${data_dir} \
       --output-dir "results/data_benchmark/${output_dir_postfix}/gpu-n${n_ranks}" \
       --n-train $((2048 * ${n_ranks})) --n-valid $((512 * ${n_ranks})) --n-epochs 10 \
@@ -27,7 +27,7 @@ done
 #for log_n_ranks in $(seq 0 0); do
 #  n_ranks=$((2**log_n_ranks))
 #  set -x
-#  sbatch -N ${n_ranks}  scripts/daint/train_daint.sh  \
+#  sbatch -N ${n_ranks}  scripts/daint/train_daint.sh --data-benchmark \
 #      --output-dir "results/data_benchmark/${output_dir_postfix}/gpu-dummy-n${n_ranks}" \
 #      --n-train $((2048 * ${n_ranks})) --n-valid $((512 * ${n_ranks})) --n-epochs 5 \
 #      configs/cosmo_dummy.yaml

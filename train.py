@@ -201,16 +201,16 @@ def data_benchmarking(args, config, dist, datasets):
 
     def reduce_dataset(dataset):
         x, y = dataset.make_one_shot_iterator().get_next()
-        # Perform a simple operation
-        return tf.math.reduce_sum(x), tf.math.reduce_sum(y)
+        if args.rank_gpu:
+            with tf.device("GPU:{}".format(dist.local_rank)):
+                # Perform a simple operation
+                return tf.math.reduce_sum(x), tf.math.reduce_sum(y)
+        else:
+            # Perform a simple operation
+            return tf.math.reduce_sum(x), tf.math.reduce_sum(y)
 
-    if args.rank_gpu:
-        with tf.device("GPU:{}".format(dist.local_rank)):
-            train_data_reduced = reduce_dataset(datasets['train_dataset'])
-            valid_data_reduced = reduce_dataset(datasets['valid_dataset'])
-    else:
-        train_data_reduced = reduce_dataset(datasets['train_dataset'])
-        valid_data_reduced = reduce_dataset(datasets['valid_dataset'])
+    train_data_reduced = reduce_dataset(datasets['train_dataset'])
+    valid_data_reduced = reduce_dataset(datasets['valid_dataset'])
 
     data_benchmark_history = pd.DataFrame(columns=['epoch','local_times','global_times'])
     data_benchmark_history.set_index('epoch')
@@ -234,6 +234,8 @@ def data_benchmarking(args, config, dist, datasets):
             logging.error('Dataset ran out of entries before number of epochs reached!', config['data']['n_epochs'])
 
     if hvd.rank() == 0:
+        data_benchmark_history.to_csv(os.path.join(config['output_dir'], 'data_benchmark_history.csv'))
+
         # Print benchmark summary (assuming sharded data set)
         def print_data_benchmark_summary(dist, n_samples, benchmark_history):
 
@@ -241,8 +243,8 @@ def data_benchmarking(args, config, dist, datasets):
                 local_times = benchmark_history['local_times']
                 global_times = benchmark_history['global_times']
             else:
-                local_times = np.vstack(benchmark_history['local_times'].to_numpy())
-                global_times = np.vstack(benchmark_history['global_times'].to_numpy())
+                local_times = np.vstack(np.array(benchmark_history['local_times']))
+                global_times = np.vstack(np.array(benchmark_history['global_times']))
 
             print('Global data loading time: %.4f +- %.4f s' %
                   (np.mean(global_times), np.std(global_times)) )
@@ -267,8 +269,6 @@ def data_benchmarking(args, config, dist, datasets):
             print('Repeated data loading (later epochs)')
             later_epoch_history = data_benchmark_history[data_benchmark_history['epoch'] > 0]
             print_data_benchmark_summary(dist, n_samples, later_epoch_history)
-
-        data_benchmark_history.to_csv(os.path.join(config['output_dir'], 'data_benchmark_history.csv'))
 
 
 def main():
