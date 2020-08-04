@@ -14,7 +14,7 @@ for log_n_ranks in $(seq 0 ${log_max_ranks}); do
   set -x
   sbatch -N ${n_ranks}  scripts/daint/train_daint.sh  \
       --data-dir ${data_dir} \
-      --output-dir "results/${output_dir_postfix}/scaling-gpu-n${n_ranks}" \
+      --output-dir "results/weak_scaling/${output_dir_postfix}/scaling-gpu-n${n_ranks}" \
       --n-train $((256 * ${n_ranks})) --n-valid $((256 * ${n_ranks})) --n-epochs 16 \
       configs/cosmo.yaml
   set +x
@@ -25,7 +25,7 @@ for log_n_ranks in $(seq 0 ${log_max_ranks}); do
   n_ranks=$((2**log_n_ranks))
   set -x
   sbatch -N ${n_ranks}  scripts/daint/train_daint.sh  \
-      --output-dir "results/${output_dir_postfix}/scaling-gpu-dummy-n${n_ranks}" \
+      --output-dir "results/weak_scaling/${output_dir_postfix}/scaling-gpu-dummy-n${n_ranks}" \
       --n-train $((256 * ${n_ranks})) --n-valid $((256 * ${n_ranks})) --n-epochs 16 \
       configs/cosmo_dummy.yaml
   set +x
