@@ -72,6 +72,10 @@ def parse_args():
     add_arg('--print-fom', action='store_true',
             help='Print parsable figure of merit')
     add_arg('-v', '--verbose', action='store_true')
+
+    add_arg('--data-benchmark', action='store_true')
+    add_arg('--inter-threads', type=int, default=2)
+    add_arg('--intra-threads', type=int, default=32)
     return parser.parse_args()
 
 def init_workers(distributed=False):
@@ -84,8 +88,8 @@ def init_workers(distributed=False):
                                local_rank=hvd.local_rank(),
                                local_size=hvd.local_size())
     else:
-        import pydevd_pycharm
-        pydevd_pycharm.settrace('localhost', port=23232, stdoutToServer=True, stderrToServer=True)
+        #import pydevd_pycharm
+        #pydevd_pycharm.settrace('localhost', port=23232, stdoutToServer=True, stderrToServer=True)
         return SimpleNamespace(rank=0, size=1, local_rank=0, local_size=1)
 
 def config_logging(verbose):
@@ -117,6 +121,13 @@ def load_config(args):
         config['data']['apply_log'] = bool(args.apply_log)
     if args.staged_files is not None:
         config['data']['staged_files'] = bool(args.staged_files)
+
+    if not 'device' in config:
+        config['device'] = {}
+    if args.inter_threads is not None:
+        config['device']['inter_threads'] = args.inter_threads
+    if args.inter_threads is not None:
+        config['device']['intra_threads'] = args.intra_threads
 
     # Hyperparameters
     if args.conv_size is not None:
@@ -159,6 +170,107 @@ def print_training_summary(output_dir, print_fom):
         if print_fom:
             print('FoM:', history['val_loss'].loc[best])
 
+def data_benchmarking(args, config, dist, datasets):
+    import time
+    import pandas as pd
+
+    config['n_ranks'] = dist.size
+    save_config(config)
+
+    #pprint.pprint(datasets)
+
+    # def reduce_datasets(datasets):
+    #     for x, y in datasets['train_dataset']:
+    #         # Perform a simple operation
+    #         tf.math.reduce_sum(x)
+    #         tf.math.reduce_sum(y)
+    #     for x, y in datasets['valid_dataset']:
+    #         # Perform a simple operation
+    #         tf.math.reduce_sum(x)
+    #         tf.math.reduce_sum(y)
+    # start_time = time.perf_counter()
+    # with tf.keras.backend.get_session() as sess:
+    #     if args.rank_gpu:
+    #         with tf.device("GPU:{}".format(dist.local_rank)):
+    #             reduce_datasets(sess, datasets)
+    #     else:
+    #         reduce_datasets(sess, datasets)
+    #
+    # duration = time.perf_counter() - start_time
+
+
+    def reduce_dataset(dataset):
+        x, y = dataset.make_one_shot_iterator().get_next()
+        # Perform a simple operation
+        return tf.math.reduce_sum(x), tf.math.reduce_sum(y)
+
+    if args.rank_gpu:
+        with tf.device("GPU:{}".format(dist.local_rank)):
+            train_data_reduced = reduce_dataset(datasets['train_dataset'])
+            valid_data_reduced = reduce_dataset(datasets['valid_dataset'])
+    else:
+        train_data_reduced = reduce_dataset(datasets['train_dataset'])
+        valid_data_reduced = reduce_dataset(datasets['valid_dataset'])
+
+    data_benchmark_history = pd.DataFrame(columns=['epoch','local_times','global_times'])
+    data_benchmark_history.set_index('epoch')
+    with tf.keras.backend.get_session() as sess:
+        try:
+            for epoch in range(config['data']['n_epochs']):
+                # Synchronize all ranks
+                hvd.allgather([0])
+                start_time = time.perf_counter()
+                for _ in range(datasets['n_train_steps']):
+                    sess.run(train_data_reduced)
+                for _ in range(datasets['n_valid_steps']):
+                    sess.run(valid_data_reduced)
+                local_time = time.perf_counter() - start_time
+                hvd.allgather([0])
+                global_time = time.perf_counter() - start_time
+                local_times = hvd.allgather([local_time])
+                global_times = hvd.allgather([global_time])
+                data_benchmark_history.loc[epoch] = [epoch, local_times, global_times]
+        except tf.errors.OutOfRangeError:
+            logging.error('Dataset ran out of entries before number of epochs reached!', config['data']['n_epochs'])
+
+    if hvd.rank() == 0:
+        # Print benchmark summary (assuming sharded data set)
+        def print_data_benchmark_summary(dist, n_samples, benchmark_history):
+
+            if isinstance(benchmark_history, pd.Series):
+                local_times = benchmark_history['local_times']
+                global_times = benchmark_history['global_times']
+            else:
+                local_times = np.vstack(benchmark_history['local_times'].to_numpy())
+                global_times = np.vstack(benchmark_history['global_times'].to_numpy())
+
+            print('Global data loading time: %.4f +- %.4f s' %
+                  (np.mean(global_times), np.std(global_times)) )
+
+            local_throughputs = n_samples / (dist.size*local_times)
+            print('Per-node throughput: %.4f +- %.4f samples/s' %
+                  (np.mean(local_throughputs), np.std(local_throughputs)) )
+
+            global_throughputs = n_samples / global_times
+            print('Total throughput: %.4f +- %.4f samples/s' %
+                  (np.mean(global_throughputs), np.std(global_throughputs)) )
+
+            print("")
+
+        n_samples = config['data']['n_train'] + config['data']['n_valid']
+
+        print('Initial data loading (first epoch)')
+        initial_epoch_history = data_benchmark_history.loc[0]
+        print_data_benchmark_summary(dist, n_samples, initial_epoch_history)
+
+        if data_benchmark_history.shape[0] > 1:
+            print('Repeated data loading (later epochs)')
+            later_epoch_history = data_benchmark_history[data_benchmark_history['epoch'] > 0]
+            print_data_benchmark_summary(dist, n_samples, later_epoch_history)
+
+        data_benchmark_history.to_csv(os.path.join(config['output_dir'], 'data_benchmark_history.csv'))
+
+
 def main():
     """Main function"""
 
@@ -177,7 +289,8 @@ def main():
     gpu = dist.local_rank if args.rank_gpu else None
     if gpu is not None:
         logging.info('Taking gpu %i', gpu)
-    configure_session(gpu=gpu, **config.get('device', {}))
+    configure_session(gpu=gpu,
+                      **config.get('device', {}))
 
     # Load the data
     data_config = config['data']
@@ -186,96 +299,99 @@ def main():
     datasets = get_datasets(dist=dist, **data_config)
     logging.debug('Datasets: %s', datasets)
 
-    # Construct or reload the model
-    if dist.rank == 0:
-        logging.info('Building the model')
-    train_config = config['train']
-    initial_epoch = 0
-    checkpoint_format = os.path.join(config['output_dir'], 'checkpoint-{epoch:03d}.h5')
-    if args.resume and os.path.exists(checkpoint_format.format(epoch=1)):
-        # Reload model from last checkpoint
-        initial_epoch, model = reload_last_checkpoint(
-            checkpoint_format, data_config['n_epochs'],
-            distributed=args.distributed)
+    if args.data_benchmark: # only measure data loading
+        data_benchmarking(args, config, dist, datasets)
     else:
-        # Build a new model
-        model = get_model(**config['model'])
-        # Configure the optimizer
-        opt = get_optimizer(distributed=args.distributed,
-                            **config['optimizer'])
+        # Construct or reload the model
+        if dist.rank == 0:
+            logging.info('Building the model')
+        train_config = config['train']
+        initial_epoch = 0
+        checkpoint_format = os.path.join(config['output_dir'], 'checkpoint-{epoch:03d}.h5')
+        if args.resume and os.path.exists(checkpoint_format.format(epoch=1)):
+            # Reload model from last checkpoint
+            initial_epoch, model = reload_last_checkpoint(
+                checkpoint_format, data_config['n_epochs'],
+                distributed=args.distributed)
+        else:
+            # Build a new model
+            model = get_model(**config['model'])
+            # Configure the optimizer
+            opt = get_optimizer(distributed=args.distributed,
+                                **config['optimizer'])
 
-        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        #run_metadata = tf.RunMetadata()
+            #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            #run_metadata = tf.RunMetadata()
 
-        # Compile the model
-        model.compile(optimizer=opt, loss=train_config['loss'],
-                      metrics=train_config['metrics'])
-                      #options=run_options, run_metadata=run_metadata)
+            # Compile the model
+            model.compile(optimizer=opt, loss=train_config['loss'],
+                          metrics=train_config['metrics'])
+                          #options=run_options, run_metadata=run_metadata)
 
-    if dist.rank == 0:
-        model.summary()
+        if dist.rank == 0:
+            model.summary()
 
-    # Save configuration to output directory
-    if dist.rank == 0:
-        config['n_ranks'] = dist.size
-        save_config(config)
+        # Save configuration to output directory
+        if dist.rank == 0:
+            config['n_ranks'] = dist.size
+            save_config(config)
 
-    # Prepare the callbacks
-    if dist.rank == 0:
-        logging.info('Preparing callbacks')
-    callbacks = []
-    if args.distributed:
+        # Prepare the callbacks
+        if dist.rank == 0:
+            logging.info('Preparing callbacks')
+        callbacks = []
+        if args.distributed:
 
-        # Broadcast initial variable states from rank 0 to all processes.
-        callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
+            # Broadcast initial variable states from rank 0 to all processes.
+            callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
 
-        # Average metrics across workers
-        callbacks.append(hvd.callbacks.MetricAverageCallback())
+            # Average metrics across workers
+            callbacks.append(hvd.callbacks.MetricAverageCallback())
 
-    # Learning rate decay schedule
-    if 'lr_schedule' in config:
-        global_batch_size = data_config['batch_size'] * dist.size
-        callbacks.append(tf.keras.callbacks.LearningRateScheduler(
-            get_lr_schedule(global_batch_size=global_batch_size,
-                            **config['lr_schedule'])))
+        # Learning rate decay schedule
+        if 'lr_schedule' in config:
+            global_batch_size = data_config['batch_size'] * dist.size
+            callbacks.append(tf.keras.callbacks.LearningRateScheduler(
+                get_lr_schedule(global_batch_size=global_batch_size,
+                                **config['lr_schedule'])))
 
-    # Timing
-    timing_callback = TimingCallback()
-    callbacks.append(timing_callback)
+        # Timing
+        timing_callback = TimingCallback()
+        callbacks.append(timing_callback)
 
-    # Checkpointing and logging from rank 0 only
-    if dist.rank == 0:
-        callbacks.append(tf.keras.callbacks.ModelCheckpoint(checkpoint_format))
-        callbacks.append(tf.keras.callbacks.CSVLogger(
-            os.path.join(config['output_dir'], 'history.csv'), append=args.resume))
-        callbacks.append(tf.keras.callbacks.TensorBoard(
-            os.path.join(config['output_dir'], 'tensorboard')))
+        # Checkpointing and logging from rank 0 only
+        if dist.rank == 0:
+            callbacks.append(tf.keras.callbacks.ModelCheckpoint(checkpoint_format))
+            callbacks.append(tf.keras.callbacks.CSVLogger(
+                os.path.join(config['output_dir'], 'history.csv'), append=args.resume))
+            callbacks.append(tf.keras.callbacks.TensorBoard(
+                os.path.join(config['output_dir'], 'tensorboard')))
 
-    # Early stopping
-    patience = config.get('early_stopping_patience', None)
-    if patience is not None:
-        callbacks.append(tf.keras.callbacks.EarlyStopping(
-            monitor='val_loss', min_delta=1e-5, patience=patience, verbose=1))
+        # Early stopping
+        patience = config.get('early_stopping_patience', None)
+        if patience is not None:
+            callbacks.append(tf.keras.callbacks.EarlyStopping(
+                monitor='val_loss', min_delta=1e-5, patience=patience, verbose=1))
 
-    if dist.rank == 0:
-        logging.debug('Callbacks: %s', callbacks)
+        if dist.rank == 0:
+            logging.debug('Callbacks: %s', callbacks)
 
-    # Train the model
-    if dist.rank == 0:
-        logging.info('Beginning training')
-    fit_verbose = 1 if (args.verbose and dist.rank==0) else 2
-    model.fit(datasets['train_dataset'],
-              steps_per_epoch=datasets['n_train_steps'],
-              epochs=data_config['n_epochs'],
-              validation_data=datasets['valid_dataset'],
-              validation_steps=datasets['n_valid_steps'],
-              callbacks=callbacks,
-              initial_epoch=initial_epoch,
-              verbose=fit_verbose)
+        # Train the model
+        if dist.rank == 0:
+            logging.info('Beginning training')
+        fit_verbose = 1 if (args.verbose and dist.rank==0) else 2
+        model.fit(datasets['train_dataset'],
+                  steps_per_epoch=datasets['n_train_steps'],
+                  epochs=data_config['n_epochs'],
+                  validation_data=datasets['valid_dataset'],
+                  validation_steps=datasets['n_valid_steps'],
+                  callbacks=callbacks,
+                  initial_epoch=initial_epoch,
+                  verbose=fit_verbose)
 
-    # Print training summary
-    if dist.rank == 0:
-        print_training_summary(config['output_dir'], args.print_fom)
+        # Print training summary
+        if dist.rank == 0:
+            print_training_summary(config['output_dir'], args.print_fom)
 
     # Finalize
     if dist.rank == 0:
