@@ -5,6 +5,7 @@
 #SBATCH -t 0:40:00
 #SBATCH -J train-cosmoflow-daint
 #SBATCH -o logs/%x-%j.out
+#SBATCH -d singleton
 
 . scripts/daint/setup_daint.sh
 

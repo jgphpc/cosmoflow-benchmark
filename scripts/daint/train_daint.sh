@@ -2,9 +2,10 @@
 #SBATCH --constraint=gpu
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
-#SBATCH -t 0:59:00
+#SBATCH -t 0:30:00
 #SBATCH -J train-cosmoflow-daint
 #SBATCH -o logs/%x-%j.out
+#SBATCH -d singleton
 
 . scripts/daint/setup_daint.sh
 

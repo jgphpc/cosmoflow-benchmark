@@ -75,7 +75,7 @@ def parse_args():
 
     add_arg('--data-benchmark', action='store_true')
     add_arg('--inter-threads', type=int, default=2)
-    add_arg('--intra-threads', type=int, default=32)
+    add_arg('--intra-threads', type=int, default=12)
     return parser.parse_args()
 
 def init_workers(distributed=False):
@@ -122,12 +122,18 @@ def load_config(args):
     if args.staged_files is not None:
         config['data']['staged_files'] = bool(args.staged_files)
 
+    # Session/device parameters
     if not 'device' in config:
         config['device'] = {}
     if args.inter_threads is not None:
         config['device']['inter_threads'] = args.inter_threads
     if args.inter_threads is not None:
         config['device']['intra_threads'] = args.intra_threads
+
+    config['distributed'] = { 
+               'size':       hvd.size(),
+               'local_size': hvd.local_size()
+        }
 
     # Hyperparameters
     if args.conv_size is not None:
