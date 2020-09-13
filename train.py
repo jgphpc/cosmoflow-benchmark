@@ -16,8 +16,9 @@ import pandas as pd
 import tensorflow as tf
 # Suppress TF warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-tf.compat.v1.logging.set_verbosity(logging.DEBUG)
+tf.compat.v1.logging.set_verbosity(logging.ERROR)
 import horovod.tensorflow.keras as hvd
+from mlperf_logging import mllog
 
 # Local imports
 from data import get_datasets
@@ -25,10 +26,11 @@ from models import get_model
 # Fix for loading Lambda layer checkpoints
 from models.layers import *
 from utils.optimizers import get_optimizer, get_lr_schedule
-from utils.callbacks import TimingCallback
+from utils.callbacks import TimingCallback, MLPerfLoggingCallback
 from utils.device import configure_session
 from utils.argparse import ReadYaml
 from utils.checkpoints import reload_last_checkpoint
+from utils.mlperf_logging import configure_mllogger, log_submission_info
 
 # Stupid workaround until absl logging fix, see:
 # https://github.com/tensorflow/tensorflow/issues/26691
@@ -50,8 +52,9 @@ def parse_args():
     add_arg('--batch-size', type=int, help='Override the batch size')
     add_arg('--n-epochs', type=int, help='Override number of epochs')
     add_arg('--apply-log', type=int, choices=[0, 1], help='Apply log transform to data')
-    add_arg('--staged-files', type=int, choices=[0, 1],
-            help='Specify if you are pre-staging subsets of data to local FS')
+    add_arg('--stage-dir', help='Local directory to stage data to before training')
+    add_arg('--n-parallel-reads', type=int, help='Override num parallel read calls')
+    add_arg('--prefetch', type=int, help='Override data prefetch number')
 
     # Hyperparameter settings
     add_arg('--conv-size', type=int, help='CNN size parameter')
@@ -63,19 +66,28 @@ def parse_args():
     add_arg('--optimizer', help='Override optimizer type')
     add_arg('--lr', type=float, help='Override learning rate')
 
-    # Other settings
+    # Runtime / device settings
     add_arg('-d', '--distributed', action='store_true')
     add_arg('--rank-gpu', action='store_true',
             help='Use GPU based on local rank')
     add_arg('--resume', action='store_true',
             help='Resume from last checkpoint')
+    add_arg('--intra-threads', type=int, default=12,
+            help='TF intra-parallel threads')
+    add_arg('--inter-threads', type=int, default=2,
+            help='TF inter-parallel threads')
+    add_arg('--kmp-blocktime', help='Set KMP_BLOCKTIME')
+    add_arg('--kmp-affinity', help='Set KMP_AFFINITY')
+    add_arg('--omp-num-threads', help='Set OMP_NUM_THREADS')
+
+    # Other settings
+    add_arg('--tensorboard', action='store_true',
+            help='Enable TB logger')
     add_arg('--print-fom', action='store_true',
             help='Print parsable figure of merit')
     add_arg('-v', '--verbose', action='store_true')
 
     add_arg('--data-benchmark', action='store_true')
-    add_arg('--inter-threads', type=int, default=2)
-    add_arg('--intra-threads', type=int, default=12)
     return parser.parse_args()
 
 def init_workers(distributed=False):
@@ -119,8 +131,12 @@ def load_config(args):
         config['data']['n_epochs'] = args.n_epochs
     if args.apply_log is not None:
         config['data']['apply_log'] = bool(args.apply_log)
-    if args.staged_files is not None:
-        config['data']['staged_files'] = bool(args.staged_files)
+    if args.stage_dir is not None:
+        config['data']['stage_dir'] = args.stage_dir
+    if args.n_parallel_reads is not None:
+        config['data']['n_parallel_reads'] = args.n_parallel_reads
+    if args.prefetch is not None:
+        config['data']['prefetch'] = args.prefetch
 
     # Session/device parameters
     if not 'device' in config:
@@ -129,8 +145,14 @@ def load_config(args):
         config['device']['inter_threads'] = args.inter_threads
     if args.inter_threads is not None:
         config['device']['intra_threads'] = args.intra_threads
+    if args.kmp_blocktime is not None:
+        config['device']['kmp_blocktime'] = args.kmp_blocktime
+    if args.kmp_affinity is not None:
+        config['device']['kmp_affinity'] = args.kmp_affinity
+    if args.omp_num_threads is not None:
+        config['device']['omp_num_threads'] = args.omp_num_threads
 
-    config['distributed'] = { 
+    config['distributed'] = {
                'size':       hvd.size(),
                'local_size': hvd.local_size()
         }
@@ -175,6 +197,8 @@ def print_training_summary(output_dir, print_fom):
         # Figure of merit printing for HPO parsing
         if print_fom:
             print('FoM:', history['val_loss'].loc[best])
+    logging.info('Total epoch time: %.3f', history.time.sum())
+    logging.info('Mean epoch time: %.3f', history.time.mean())
 
 def data_benchmarking(args, config, dist, datasets):
     import time
@@ -182,28 +206,6 @@ def data_benchmarking(args, config, dist, datasets):
 
     config['n_ranks'] = dist.size
     save_config(config)
-
-    #pprint.pprint(datasets)
-
-    # def reduce_datasets(datasets):
-    #     for x, y in datasets['train_dataset']:
-    #         # Perform a simple operation
-    #         tf.math.reduce_sum(x)
-    #         tf.math.reduce_sum(y)
-    #     for x, y in datasets['valid_dataset']:
-    #         # Perform a simple operation
-    #         tf.math.reduce_sum(x)
-    #         tf.math.reduce_sum(y)
-    # start_time = time.perf_counter()
-    # with tf.keras.backend.get_session() as sess:
-    #     if args.rank_gpu:
-    #         with tf.device("GPU:{}".format(dist.local_rank)):
-    #             reduce_datasets(sess, datasets)
-    #     else:
-    #         reduce_datasets(sess, datasets)
-    #
-    # duration = time.perf_counter() - start_time
-
 
     def reduce_dataset(dataset):
         x, y = dataset.make_one_shot_iterator().get_next()
@@ -291,12 +293,28 @@ def main():
     if dist.rank == 0:
         logging.info('Configuration: %s', config)
 
+    # Setup MLPerf logging
+    mllogger = configure_mllogger(config['output_dir'])
+    if dist.rank == 0:
+        mllogger.event(key=mllog.constants.CACHE_CLEAR)
+        mllogger.start(key=mllog.constants.INIT_START)
+
     # Device and session configuration
     gpu = dist.local_rank if args.rank_gpu else None
     if gpu is not None:
         logging.info('Taking gpu %i', gpu)
     configure_session(gpu=gpu,
-                      **config.get('device', {}))
+                      intra_threads=args.intra_threads,
+                      inter_threads=args.inter_threads,
+                      kmp_blocktime=args.kmp_blocktime,
+                      kmp_affinity=args.kmp_affinity,
+                      omp_num_threads=args.omp_num_threads)
+
+    # Start MLPerf logging
+    if dist.rank == 0:
+        log_submission_info(**config.get('mlperf', {}))
+        mllogger.end(key=mllog.constants.INIT_STOP)
+        mllogger.start(key=mllog.constants.RUN_START)
 
     # Load the data
     data_config = config['data']
@@ -305,7 +323,8 @@ def main():
     datasets = get_datasets(dist=dist, **data_config)
     logging.debug('Datasets: %s', datasets)
 
-    if args.data_benchmark: # only measure data loading
+    if args.data_benchmark:
+        # Only measure data loading performance
         data_benchmarking(args, config, dist, datasets)
     else:
         # Construct or reload the model
@@ -326,13 +345,9 @@ def main():
             opt = get_optimizer(distributed=args.distributed,
                                 **config['optimizer'])
 
-            #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-            #run_metadata = tf.RunMetadata()
-
             # Compile the model
             model.compile(optimizer=opt, loss=train_config['loss'],
                           metrics=train_config['metrics'])
-                          #options=run_options, run_metadata=run_metadata)
 
         if dist.rank == 0:
             model.summary()
@@ -370,8 +385,10 @@ def main():
             callbacks.append(tf.keras.callbacks.ModelCheckpoint(checkpoint_format))
             callbacks.append(tf.keras.callbacks.CSVLogger(
                 os.path.join(config['output_dir'], 'history.csv'), append=args.resume))
-            callbacks.append(tf.keras.callbacks.TensorBoard(
-                os.path.join(config['output_dir'], 'tensorboard')))
+            if args.tensorboard:
+                callbacks.append(tf.keras.callbacks.TensorBoard(
+                    os.path.join(config['output_dir'], 'tensorboard')))
+            callbacks.append(MLPerfLoggingCallback())
 
         # Early stopping
         patience = config.get('early_stopping_patience', None)
@@ -394,6 +411,10 @@ def main():
                   callbacks=callbacks,
                   initial_epoch=initial_epoch,
                   verbose=fit_verbose)
+
+        # Stop MLPerf timer
+        if dist.rank == 0:
+            mllogger.end(key=mllog.constants.RUN_STOP, metadata={'status': 'success'})
 
         # Print training summary
         if dist.rank == 0:
