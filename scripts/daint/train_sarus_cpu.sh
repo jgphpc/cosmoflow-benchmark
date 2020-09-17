@@ -7,7 +7,7 @@
 #SBATCH -o logs/%x-%j.out
 #SBATCH -d singleton
 
-. scripts/daint/setup_daint.sh
+. scripts/daint/setup_sarus.sh
 
 # TODO: output logs and horovod timeline to output directory
 #export HOROVOD_TIMELINE=./timeline.json
@@ -22,4 +22,9 @@
 
 # Run the training
 set -x
-srun -l -u python train.py --distributed $@
+srun -l -u sarus run --mpi \
+    --mount=type=bind,source=$(pwd)/../data,destination=/root/mlperf/data \
+    --mount=type=bind,source=$(pwd),destination=/root/mlperf/cosmoflow-benchmark \
+    --workdir=/root/mlperf/cosmoflow-benchmark \
+    load/library/cosmoflow_gpu_daint \
+    python train.py --distributed $@

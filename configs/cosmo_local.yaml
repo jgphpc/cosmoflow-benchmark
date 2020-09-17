@@ -2,7 +2,7 @@ output_dir: results/cosmo-test
 
 data:
     name: cosmo
-    data_dir: /home/lukasd/src/mlperf/data/cosmoflow-test
+    data_dir: ../data/cosmoflow-test
     n_train: 8
     n_valid: 4
     sample_shape: [128, 128, 128, 4]

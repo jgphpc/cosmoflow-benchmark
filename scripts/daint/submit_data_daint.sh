@@ -3,7 +3,7 @@
 set -ex
 timestamp=$(date "+%Y-%m-%d_%H-%M-%S")
 output_dir_postfix="${timestamp}_${HOSTNAME}"
-data_dir=/scratch/snx3000/lukasd/mlperf/data/cosmoflow/cosmoUniverse_2019_05_4parE_tf
+data_dir=/root/mlperf/data/cosmoflow/cosmoUniverse_2019_05_4parE_tf #/scratch/snx3000/lukasd/mlperf/data/cosmoflow/cosmoUniverse_2019_05_4parE_tf
 
 # Note to adapt number of training/validation samples when changing max. rank number 
 # (n_train=256 simulates 1024 Cosmoflow nodes, # training files = 4 * # validation files)
@@ -22,7 +22,7 @@ for log_n_ranks in $(seq 0 ${log_max_ranks}); do
   for inter_threads in ${inter_threads_range[@]}; do
     for intra_threads in ${intra_threads_range[@]}; do
       set -x
-      sbatch -N ${n_ranks}  scripts/daint/train_daint.sh --data-benchmark  \
+      sbatch -N ${n_ranks}  scripts/daint/train_sarus.sh --data-benchmark  \
           --data-dir ${data_dir} \
           --output-dir "results/data_benchmark/${output_dir_postfix}/gpu-n${n_ranks}-inter${inter_threads}-intra${intra_threads}" \
            --n-train $((${n_train_per_rank} * ${n_ranks})) --n-valid $((${n_valid_per_rank} * ${n_ranks})) --n-epochs 5 \
