@@ -54,4 +54,4 @@ Submission scripts are in `scripts`. YAML configuration files go in `configs`.
 
 ### Running at CSCS
 
-Described in [README_CSCS.md](./README_CSCS.md).
+How to obtain ML-Perf submission is described in [README_CSCS_SUBMISSION.md](./README_CSCS_SUBMISSION.md), benchmarks and other details related to development are discussed in [README_CSCS_DEV.md](./README_CSCS_DEV.md).
