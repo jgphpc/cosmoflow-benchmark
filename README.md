@@ -51,3 +51,7 @@ Submission scripts are in `scripts`. YAML configuration files go in `configs`.
 ### Running at NERSC
 
 `sbatch -N 64 scripts/train_cori.sh`
+
+### Running at CSCS
+
+Described in [README_CSCS.md](./README_CSCS.md).
