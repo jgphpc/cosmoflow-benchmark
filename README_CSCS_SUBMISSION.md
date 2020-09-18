@@ -3,7 +3,8 @@
 The ML-Perf submission results can be obtained with the docker image 
 
 ```
-docker build -f builds/Dockerfile.gpu_daint -t cosmoflow_gpu_daint
+cd builds
+docker build -f Dockerfile.gpu_daint -t cosmoflow_gpu_daint
 ```
 
 which is built outside of Piz Daint and saved with `docker save cosmoflow_gpu_daint -o cosmoflow_gpu_daint.tar`. To make it available to the container runtime [`Sarus`](https://link.springer.com/chapter/10.1007/978-3-030-34356-9_5), it is copied to Piz Daint and loaded with `sarus load  cosmoflow_gpu_daint.tar cosmoflow_gpu_daint`.

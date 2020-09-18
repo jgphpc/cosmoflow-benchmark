@@ -1,6 +1,6 @@
 ### Benchmarks for Cosmoflow evaluation on Piz Daint
 
-Please clone this repository, set up the data directory (at `../data` relative to it) and build & move the Cosmoflow Docker image for Piz Daint as described in [README_CSCS_SUBMISSION.md](README_CSCS_SUBMISSION.md). Results from every run will appear under `results/<study-id>` and log-files in `logs/`.
+To run Cosmoflow, please follow the instructions in [README_CSCS_SUBMISSION.                   md](README_CSCS_SUBMISSION.md), i.e. clone this repository, set up the data directory (at `../data/cosmoflow` relative to this repo) and build & move the Cosmoflow Docker image for Piz Daint. Results from every run will appear under `results/<study-id>` and log-files in `logs/`.
 
 
 ### Run an individual instance of Cosmoflow
