@@ -15,8 +15,8 @@ fi
 
 echo "Prepare sumbission at ${SUBMISSION_REPO_PATH} based on current commit ${current_commit}."
 
-mkdir -p ${SUBMISSION_REPO_PATH}/CSCS/benchmarks/cosmoflow/implementations/${repository_name}
-cd ${SUBMISSION_REPO_PATH}/CSCS/benchmarks/cosmoflow/implementations/${repository_name}
+mkdir -p ${SUBMISSION_REPO_PATH}/CSCS/benchmarks/cosmoflow/implementations/
+cd ${SUBMISSION_REPO_PATH}/CSCS/benchmarks/cosmoflow/implementations/
 
 wget -O ${repository_name}.tar https://github.com/lukasgd/${repository_name}/tarball/${current_commit}
 
