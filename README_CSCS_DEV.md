@@ -5,7 +5,7 @@ Please clone this repository, set up the data directory (at `../data` relative t
 
 ### Run an individual instance of Cosmoflow
 
-An individual run of the benchmark with the following `sbatch` command
+An individual run of the Cosmoflow training benchmark with the following `sbatch` command
 ```
 sbatch -N ${n_ranks}  scripts/daint/train_sarus.sh  \
     --output-dir "results/test/$(date '+%Y-%m-%d_%H-%M-%S')_${HOSTNAME}/" \
@@ -18,7 +18,7 @@ n_training_samples_per_rank=256
 n_validation_samples_per_rank=256
 n_epochs=16
 ```
-and choose `n_ranks` according to your preference.
+and choose `n_ranks` according to your preference. To only perform the data-loading benchmark instead of the training, add `--data-benchmark` in the `sbatch` command after `train_sarus.sh`.
 
 ### Benchmark studies
 
