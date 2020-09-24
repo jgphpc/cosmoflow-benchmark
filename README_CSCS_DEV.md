@@ -1,7 +1,16 @@
 ### Benchmarks for Cosmoflow evaluation on Piz Daint
 
-To run Cosmoflow, please follow the instructions in [README_CSCS_SUBMISSION.                   md](README_CSCS_SUBMISSION.md), i.e. clone this repository, set up the data directory (at `../data/cosmoflow` relative to this repo) and build & move the Cosmoflow Docker image for Piz Daint. Results from every run will appear under `results/<study-id>` and log-files in `logs/`.
+To run Cosmoflow, please follow the instructions in [README_CSCS_SUBMISSION.md](README_CSCS_SUBMISSION.md), i.e. clone this repository, set up the data directory (at `../data/cosmoflow` relative to this repo) and build & move the Cosmoflow Docker image for Piz Daint. Results from every run will appear under `results/<study-id>` and log-files in `logs/`.
 
+### Develop locally with Docker
+
+To develop with Docker locally, run the following command from the Cosmoflow directory 
+
+```
+docker run -it --rm -v $(pwd):/root/mlperf/cosmoflow-benchmark -v $(pwd)/../data:/root/mlperf/data cosmoflow_gpu_daint
+```
+
+and perform small-scale training/data loading benchmarks with the files in `scripts/local`.
 
 ### Run an individual instance of Cosmoflow
 
