@@ -3,3 +3,4 @@
 module load daint-gpu
 module load sarus
 
+export MPICH_RDMA_ENABLED_CUDA=1

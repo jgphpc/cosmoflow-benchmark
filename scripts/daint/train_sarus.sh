@@ -2,7 +2,7 @@
 #SBATCH --constraint=gpu
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
-#SBATCH -t 24:00:00
+#SBATCH -t 2:00:00
 #SBATCH -J train-cosmoflow-daint
 #SBATCH -o logs/%x-%j.out
 #SBATCH -d singleton
