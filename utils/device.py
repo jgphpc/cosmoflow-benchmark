@@ -30,10 +30,10 @@ def configure_session(intra_threads=12, inter_threads=2,
         logging.info('INTRA_THREADS %i', intra_threads)
         logging.info('INTER_THREADS %i', inter_threads)
 
-    config = tf.ConfigProto(
+    config = tf.compat.v1.ConfigProto(
         inter_op_parallelism_threads=inter_threads,
         intra_op_parallelism_threads=intra_threads
     )
     if gpu is not None:
         config.gpu_options.visible_device_list = str(gpu)
-    tf.keras.backend.set_session(tf.Session(config=config))
+    tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session(config=config))
